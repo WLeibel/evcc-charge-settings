@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Schwellwert-Anzeige und Bearbeitung</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            padding: 0;
+        }
+
+        h1, h2 {
+            color: #333;
+        }
+
+        #container {
+            max-width: 500px;
+            margin: 0;
+            padding: 20px;
+            border: 1px solid #ccc;
+            border-radius: 10px;
+            background-color: #f9f9f9;
+        }
+
+        #enableSlider, #disableSlider {
+            width: 100%;
+            max-width: 350px;
+            margin-top: 10px;
+        }
+
+        #enableText, #disableText {
+            display: block;
+            margin-top: 10px;
+            font-weight: bold;
+        }
+
+        button {
+            margin-top: 20px;
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        #warning {
+            color: red;
+            font-weight: bold;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <h1>Schwellwerte der Ladepunkte</h1>
+        <label for="loadPointSelect">Wähle einen Ladepunkt:</label><br>
+        <select id="loadPointSelect" onchange="onLoadPointChange()"></select><br><br>
+        <h2><p id="loadPointName"></p></h2>
+
+        <!-- Anzeige der aktuellen Werte -->
+        <p id="enableThresholdValue">Lade EnableThreshold...</p>
+        <p id="disableThresholdValue">Lade DisableThreshold...</p>
+
+        <!-- Slider für EnableThreshold -->
+        <h2>Neue Schwellwerte setzen</h2>
+        <label for="enableSlider">PV-Überschuss zum Starten (W):</label><br>
+        <input type="range" id="enableSlider" min="0" max="2000" step="50" oninput="updateThresholdValues()" /><br>
+        <span id="enableText">PV-Überschuss: 0 W</span><br><br>
+
+        <label for="disableSlider">Max. Netzbezug bevor Ausschalten (W):</label><br>
+        <input type="range" id="disableSlider" min="200" max="2300" step="50" oninput="updateThresholdValues()" /><br>
+        <span id="disableText">Max. Netzbezug: 1400 W</span>
+
+        <p id="warning"></p>
+
+        <button onclick="updateThresholds()">Werte aktualisieren</button>
+    </div>
+
+    <script>
+        // Passe diese URL an deine EVCC-Installation an (z.B. http://dein-server:7070/api)
+        const API_BASE_URL = 'http://raspi:7070/api';
+        let jsonResponse = null;
+        let selectedLoadPointId = 1; // Default to first load point
+        let selectedMinPower = 1380; // Default 6A * 230V
+
+        // Funktion zur Anzeige der Threshold-Werte für einen bestimmten LoadPoint
+        function displayThresholds(loadPointId) {
+            if (jsonResponse && jsonResponse.loadpoints && jsonResponse.loadpoints.length > loadPointId - 1) {
+                const loadPoint = jsonResponse.loadpoints[loadPointId - 1];
+                const loadPointName    = loadPoint.title;
+                const enableThreshold  = loadPoint.enableThreshold;
+                const disableThreshold = loadPoint.disableThreshold;
+
+                // Berechne displayedEnable
+                const displayedEnable = enableThreshold < 0 ? -enableThreshold : enableThreshold;
+
+                // Berechne minPower basierend auf minCurrent (Annahme 230V)
+                selectedMinPower = loadPoint.minCurrent ? loadPoint.minCurrent * 230 : 1380;
+
+                document.getElementById('loadPointName').textContent = `Ladepunkt-Name: ${loadPointName}`;  
+                document.getElementById('enableThresholdValue').textContent = `Einschalt-Schwellwert: ${displayedEnable} W PV-Überschuss`;
+                document.getElementById('disableThresholdValue').textContent = `Ausschalt-Schwellwert: ${disableThreshold} W Netzbezug`;
+
+                // Setze die Slider auf die aktuellen Werte
+                document.getElementById('enableSlider').value = displayedEnable;
+                document.getElementById('disableSlider').value = disableThreshold;
+                updateThresholdValues();
+            } else {
+                document.getElementById('enableThresholdValue').textContent = 'Ladepunkt nicht gefunden.';
+                document.getElementById('disableThresholdValue').textContent = 'Ladepunkt nicht gefunden.';
+            }
+        }
+
+        // Funktion zum Abrufen der Daten vom Server und Füllen der Select-Box
+        async function loadInitialData() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/state`);
+                if (response.ok) {
+                    jsonResponse = await response.json();
+                    populateLoadPointSelect();
+                    displayThresholds(selectedLoadPointId);
+                } else {
+                    console.error('Fehler beim Laden der initialen Daten:', response.statusText);
+                    document.getElementById('enableThresholdValue').textContent = 'Fehler beim Laden der Daten.';
+                    document.getElementById('disableThresholdValue').textContent = 'Fehler beim Laden der Daten.';
+                }
+            } catch (error) {
+                console.error('Fehler beim Laden der initialen Daten:', error);
+                alert('Netzwerkfehler beim Laden der Daten: ' + error.message);
+                document.getElementById('enableThresholdValue').textContent = 'Netzwerkfehler beim Laden der Daten.';
+                document.getElementById('disableThresholdValue').textContent = 'Netzwerkfehler beim Laden der Daten.';
+            }
+        }
+
+        // Funktion zum Füllen der Select-Box mit LoadPoints
+        function populateLoadPointSelect() {
+            const select = document.getElementById('loadPointSelect');
+            select.innerHTML = ''; // Clear existing options
+            if (jsonResponse && jsonResponse.loadpoints) {
+                jsonResponse.loadpoints.forEach((loadPoint, index) => {
+                    const option = document.createElement('option');
+                    option.value = index + 1; // LoadPoint ID (1-based)
+                    option.textContent = loadPoint.title;
+                    select.appendChild(option);
+                });
+                // Set default selection
+                select.value = selectedLoadPointId;
+            }
+        }
+
+        // Funktion bei Änderung der LoadPoint-Auswahl
+        function onLoadPointChange() {
+            selectedLoadPointId = parseInt(document.getElementById('loadPointSelect').value);
+            displayThresholds(selectedLoadPointId);
+        }
+
+        // Funktion zur Aktualisierung der angezeigten Threshold-Werte
+        function updateThresholdValues() {
+            const enableValue = parseFloat(document.getElementById('enableSlider').value);
+            const disableValue = parseFloat(document.getElementById('disableSlider').value);
+            document.getElementById('enableText').textContent = `PV-Überschuss: ${enableValue} W`;
+            document.getElementById('disableText').textContent = `Max. Netzbezug: ${disableValue} W`;
+
+            // Warnung, wenn Disable <= netzbezugNachEinschalten + 100 (Puffer für Schwankungen)
+            const warning = document.getElementById('warning');
+            const netzbezugNachEinschalten = selectedMinPower - enableValue;
+            const requiredMinDisable = netzbezugNachEinschalten + 100;
+            if (disableValue <= requiredMinDisable) {
+                warning.textContent = `Warnung: Der max. Netzbezug (${disableValue} W) sollte mindestens 100 W höher sein als der Netzbezug direkt nach Einschalten (${netzbezugNachEinschalten} W), also >${requiredMinDisable} W, um Schwankungen zu vermeiden.`;
+            } else {
+                warning.textContent = '';
+            }
+        }
+
+
+
+        // Funktion zur Aktualisierung der Threshold-Werte und Absenden an den Server
+        async function updateThresholds() {
+            const enableValue = parseFloat(document.getElementById('enableSlider').value);
+            const newEnableThreshold = -enableValue;
+            const newDisableThreshold = parseFloat(document.getElementById('disableSlider').value);
+
+            // URL für EnableThreshold
+            const enableThresholdUrl = `${API_BASE_URL}/loadpoints/${selectedLoadPointId}/enable/threshold/${newEnableThreshold}`;
+            
+            // URL für DisableThreshold
+            const disableThresholdUrl = `${API_BASE_URL}/loadpoints/${selectedLoadPointId}/disable/threshold/${newDisableThreshold}`;
+
+            try {
+                // Sende den Request für EnableThreshold
+                const enableResponse = await fetch(enableThresholdUrl, {
+                    method: 'POST'
+                });
+
+                // Sende den Request für DisableThreshold
+                const disableResponse = await fetch(disableThresholdUrl, {
+                    method: 'POST'
+                });
+
+                if (enableResponse.ok && disableResponse.ok) {
+                    // Wenn beide POST-Anfragen erfolgreich waren, zeige die neuen Werte an
+                    jsonResponse.loadpoints[selectedLoadPointId - 1].enableThreshold = newEnableThreshold;
+                    jsonResponse.loadpoints[selectedLoadPointId - 1].disableThreshold = newDisableThreshold;
+                    displayThresholds(selectedLoadPointId);
+                    alert('Werte erfolgreich aktualisiert und an den Server gesendet.');
+                } else {
+                    alert('Fehler beim Senden der Daten an den Server.');
+                }
+            } catch (error) {
+                console.error('Fehler:', error);
+                alert('Netzwerkfehler beim Senden der Daten.');
+            }
+        }
+
+        // Initiale Daten laden, wenn die Seite geladen wird
+        window.onload = loadInitialData;
+    </script>
+</body>
+</html>
