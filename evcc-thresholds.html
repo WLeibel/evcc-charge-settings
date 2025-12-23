@@ -15,6 +15,22 @@
             color: #333;
         }
 
+        h1 {
+            font-size: 1.4em;
+            margin-top: 0;
+            white-space: nowrap;
+        }
+
+        h2 {
+            font-size: 1.2em;
+            margin-top: 10px;
+        }
+
+        h3 {
+            margin-top: 0;
+            margin-bottom: 2px;
+        }
+
         #container {
             max-width: 500px;
             margin: 0;
@@ -30,10 +46,20 @@
             margin-top: 10px;
         }
 
-        #enableText, #disableText {
-            display: block;
-            margin-top: 10px;
+        #warning {
+            color: red;
             font-weight: bold;
+        }
+
+        label {
+            font-weight: bold;
+        }
+
+        .thresholdGrid {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 5px 10px;
+            margin-left: 20px;
         }
 
         button {
@@ -44,46 +70,78 @@
             border: none;
             border-radius: 5px;
             cursor: pointer;
+            font-size: 16px;
         }
 
-        #warning {
-            color: red;
-            font-weight: bold;
-            margin-top: 10px;
+        #loadPointButtons {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 2px 10px; /* Vertikal 2px, horizontal 10px */
+            margin-bottom: 20px;
+        }
+
+        .loadPointButton {
+            padding: 10px 15px;
+            background-color: #ddd;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px; /* Für bessere Touch-Unterstützung */
+            transition: background-color 0.3s;
+            -webkit-tap-highlight-color: transparent; /* Entfernt graues Highlight auf iOS */
+            outline: none; /* Entfernt Focus-Outline */
+            height: 50px; /* Feste Höhe für zweizeilige Texte */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            white-space: normal; /* Erlaubt Zeilenumbruch */
+        }
+
+        .loadPointButton.active {
+            background-color: #4CAF50 !important;
+            color: white;
+        }
+
+        .loadPointButton:hover {
+            background-color: #bbb;
         }
     </style>
 </head>
 <body>
     <div id="container">
         <h1>Schwellwerte der Ladepunkte</h1>
-        <label for="loadPointSelect">Wähle einen Ladepunkt:</label><br>
-        <select id="loadPointSelect" onchange="onLoadPointChange()"></select><br><br>
-        <h2><p id="loadPointName"></p></h2>
+        <label>Wähle einen Ladepunkt:</label><br>
+        <div id="loadPointButtons"></div>
+        <h3>Einschalt-Schwellwert</h3>
+        <p style="font-size: 0.9em; color: #666; margin: 0 0 10px 0;">Minimaler PV-Überschuss zum Starten des Ladevorgangs.</p>        <div class="thresholdGrid">
+            <span>Aktueller Schwellwert:</span><span id="enableCurrentValue">0 W</span>
+            <span>Neuen Schwellwert setzen:</span><span id="enableTextValue">0 W</span>
+        </div>
+        <input type="range" id="enableSlider" min="0" max="2000" step="50" oninput="updateThresholdValues()" /><br><br>
 
-        <!-- Anzeige der aktuellen Werte -->
-        <p id="enableThresholdValue">Lade EnableThreshold...</p>
-        <p id="disableThresholdValue">Lade DisableThreshold...</p>
-
-        <!-- Slider für EnableThreshold -->
-        <h2>Neue Schwellwerte setzen</h2>
-        <label for="enableSlider">PV-Überschuss zum Starten (W):</label><br>
-        <input type="range" id="enableSlider" min="0" max="2000" step="50" oninput="updateThresholdValues()" /><br>
-        <span id="enableText">PV-Überschuss: 0 W</span><br><br>
-
-        <label for="disableSlider">Max. Netzbezug bevor Ausschalten (W):</label><br>
+        <h3>Ausschalt-Schwellwert</h3>
+        <p style="font-size: 0.9em; color: #666; margin: 0 0 10px 0;">Maximaler Netzbezug bevor der Ladevorgang angehalten wird.</p>
+        <div class="thresholdGrid">
+            <span>Aktueller Schwellwert:</span><span id="disableCurrentValue">1400 W</span>
+            <span>Neuen Schwellwert setzen:</span><span id="disableTextValue">1400 W</span>
+        </div>
         <input type="range" id="disableSlider" min="200" max="2300" step="50" oninput="updateThresholdValues()" /><br>
-        <span id="disableText">Max. Netzbezug: 1400 W</span>
 
         <p id="warning"></p>
 
-        <button onclick="updateThresholds()">Werte aktualisieren</button>
+        <button onclick="updateThresholds()">Schwellwerte setzen</button>
     </div>
 
     <script>
+        // Konfiguration: Liste der relevanten Ladepunkt-IDs (1-basiert). Passe diese Liste an, um nur bestimmte Ladepunkte anzuzeigen.
+        // Beispiel: [1, 2] zeigt nur Ladepunkt 1 und 2 an. Leere Liste [] zeigt alle an.
+        const relevantLoadPoints = [2,3]; // Hier die IDs eintragen, z.B. [1, 3] für Ladepunkt 1 und 3
+
         // Passe diese URL an deine EVCC-Installation an (z.B. http://dein-server:7070/api)
         const API_BASE_URL = 'http://raspi:7070/api';
         let jsonResponse = null;
-        let selectedLoadPointId = 1; // Default to first load point
+        let selectedLoadPointId = 2; // Default to first load point
         let selectedMinPower = 1380; // Default 6A * 230V
 
         // Funktion zur Anzeige der Threshold-Werte für einen bestimmten LoadPoint
@@ -98,19 +156,16 @@
                 const displayedEnable = enableThreshold < 0 ? -enableThreshold : enableThreshold;
 
                 // Berechne minPower basierend auf minCurrent (Annahme 230V)
-                selectedMinPower = loadPoint.minCurrent ? loadPoint.minCurrent * 230 : 1380;
-
-                document.getElementById('loadPointName').textContent = `Ladepunkt-Name: ${loadPointName}`;  
-                document.getElementById('enableThresholdValue').textContent = `Einschalt-Schwellwert: ${displayedEnable} W PV-Überschuss`;
-                document.getElementById('disableThresholdValue').textContent = `Ausschalt-Schwellwert: ${disableThreshold} W Netzbezug`;
+                selectedMinPower = loadPoint.minCurrent ? loadPoint.minCurrent * 230 : 1380;  
+                document.getElementById('enableCurrentValue').textContent = `${displayedEnable} W`;
+                document.getElementById('disableCurrentValue').textContent = `${disableThreshold} W`;
 
                 // Setze die Slider auf die aktuellen Werte
                 document.getElementById('enableSlider').value = displayedEnable;
                 document.getElementById('disableSlider').value = disableThreshold;
                 updateThresholdValues();
             } else {
-                document.getElementById('enableThresholdValue').textContent = 'Ladepunkt nicht gefunden.';
-                document.getElementById('disableThresholdValue').textContent = 'Ladepunkt nicht gefunden.';
+                // Ladepunkt nicht gefunden
             }
         }
 
@@ -124,31 +179,50 @@
                     displayThresholds(selectedLoadPointId);
                 } else {
                     console.error('Fehler beim Laden der initialen Daten:', response.statusText);
-                    document.getElementById('enableThresholdValue').textContent = 'Fehler beim Laden der Daten.';
-                    document.getElementById('disableThresholdValue').textContent = 'Fehler beim Laden der Daten.';
+                    // Fehler werden per Alert behandelt
                 }
             } catch (error) {
                 console.error('Fehler beim Laden der initialen Daten:', error);
                 alert('Netzwerkfehler beim Laden der Daten: ' + error.message);
-                document.getElementById('enableThresholdValue').textContent = 'Netzwerkfehler beim Laden der Daten.';
-                document.getElementById('disableThresholdValue').textContent = 'Netzwerkfehler beim Laden der Daten.';
+                // Keine zusätzlichen Texte
             }
         }
 
-        // Funktion zum Füllen der Select-Box mit LoadPoints
+        // Funktion zum Füllen der Button-Liste mit LoadPoints
         function populateLoadPointSelect() {
-            const select = document.getElementById('loadPointSelect');
-            select.innerHTML = ''; // Clear existing options
+            const container = document.getElementById('loadPointButtons');
+            container.innerHTML = ''; // Clear existing buttons
             if (jsonResponse && jsonResponse.loadpoints) {
                 jsonResponse.loadpoints.forEach((loadPoint, index) => {
-                    const option = document.createElement('option');
-                    option.value = index + 1; // LoadPoint ID (1-based)
-                    option.textContent = loadPoint.title;
-                    select.appendChild(option);
+                    const id = index + 1; // LoadPoint ID (1-based)
+                    // Zeige nur relevante Ladepunkte an, oder alle wenn Liste leer
+                    if (relevantLoadPoints.length === 0 || relevantLoadPoints.includes(id)) {
+                        const button = document.createElement('button');
+                        button.className = 'loadPointButton';
+                        button.textContent = loadPoint.title;
+                        button.dataset.id = id;
+                        button.onclick = () => {
+                            selectedLoadPointId = parseInt(button.dataset.id);
+                            updateActiveButton();
+                            displayThresholds(selectedLoadPointId);
+                        };
+                        container.appendChild(button);
+                    }
                 });
-                // Set default selection
-                select.value = selectedLoadPointId;
+                updateActiveButton();
             }
+        }
+
+        // Funktion zum Hervorheben des aktiven Buttons
+        function updateActiveButton() {
+            const buttons = document.querySelectorAll('.loadPointButton');
+            buttons.forEach(button => {
+                if (parseInt(button.dataset.id) === selectedLoadPointId) {
+                    button.classList.add('active');
+                } else {
+                    button.classList.remove('active');
+                }
+            });
         }
 
         // Funktion bei Änderung der LoadPoint-Auswahl
@@ -161,15 +235,15 @@
         function updateThresholdValues() {
             const enableValue = parseFloat(document.getElementById('enableSlider').value);
             const disableValue = parseFloat(document.getElementById('disableSlider').value);
-            document.getElementById('enableText').textContent = `PV-Überschuss: ${enableValue} W`;
-            document.getElementById('disableText').textContent = `Max. Netzbezug: ${disableValue} W`;
+            document.getElementById('enableTextValue').textContent = `${enableValue} W`;
+            document.getElementById('disableTextValue').textContent = `${disableValue} W`;
 
             // Warnung, wenn Disable <= netzbezugNachEinschalten + 100 (Puffer für Schwankungen)
             const warning = document.getElementById('warning');
             const netzbezugNachEinschalten = selectedMinPower - enableValue;
             const requiredMinDisable = netzbezugNachEinschalten + 100;
             if (disableValue <= requiredMinDisable) {
-                warning.textContent = `Warnung: Der max. Netzbezug (${disableValue} W) sollte mindestens 100 W höher sein als der Netzbezug direkt nach Einschalten (${netzbezugNachEinschalten} W), also >${requiredMinDisable} W, um Schwankungen zu vermeiden.`;
+                warning.textContent = `Warnung: Der max. Netzbezug (${disableValue} W) sollte mindestens 100 W höher sein als der Netzbezug direkt nach Einschalten (${netzbezugNachEinschalten} W), also >${requiredMinDisable} W, um zu vermeiden, dass der Ladevorgang nach dem Einschalten gleich wieder angehalten wird.`;
             } else {
                 warning.textContent = '';
             }
